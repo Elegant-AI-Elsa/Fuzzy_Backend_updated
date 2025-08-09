@@ -1,0 +1,16 @@
+Flask
+Flask-CORS
+google-generativeai
+psycopg2-binary
+beautifulsoup4
+requests
+python-dotenv
+urllib3
+lxml
+tqdm
+
+# LangChain and related packages
+langchain
+langchain-community
+pgvector
+sqlalchemy

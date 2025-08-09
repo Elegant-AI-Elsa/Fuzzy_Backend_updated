@@ -1,0 +1,71 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+*.env
+
+# Environment variable files
+.env
+.env.*
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python egg info
+*.egg-info/
+.eggs/
+
+# Pip logs and coverage
+pip-log.txt
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Pytest cache
+.pytest_cache/
+
+# Logs
+*.log
+
+# Scraper crawl logs or cache
+crawl_cache/
+cache/
+
+# Database-related
+*.db
+*.sqlite
+db.sqlite3
+
+# Compiled binaries
+*.so
+*.o
+*.exe
+*.dll
+
+# Mac/Linux swap files
+*.swp
+*.swo
+
+# Optional Jupyter
+.ipynb_checkpoints/
+
+# Build artifacts
+build/
+dist/
+*.egg
+*.manifest
+*.spec
+
+# IDEs
+.idea/
