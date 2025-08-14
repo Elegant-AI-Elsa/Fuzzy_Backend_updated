@@ -6,13 +6,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
 from dotenv import load_dotenv
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import uuid
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import time
 
 # Load environment variables
 load_dotenv()
@@ -31,6 +32,61 @@ embedding_model = 'models/text-embedding-004'
 
 # Global session storage for appointment tracking
 appointment_sessions = {}
+
+# Helper to generate time slots for the current day
+def generate_time_slots():
+    now = datetime.now()
+    slots = []
+    
+    # Define working hours
+    start_hour = 9
+    end_hour = 20  # 8 PM
+    
+    # If it's Sunday, show next Monday's slots
+    if now.weekday() == 6:  # Sunday
+        next_day = now + timedelta(days=1)
+        day_name = "Monday"
+        for hour in range(start_hour, min(start_hour + 6, end_hour)):  # Show first 6 hours
+            slots.append(f"{day_name} {hour}:00")
+            slots.append(f"{day_name} {hour}:30")
+        return slots[:6]  # Limit to 6 slots
+    
+    # If it's too late today (after 6 PM), show tomorrow's slots
+    if now.hour >= 18:  # After 6 PM
+        next_day = now + timedelta(days=1)
+        # Skip if tomorrow is Sunday
+        if next_day.weekday() == 6:
+            next_day = next_day + timedelta(days=1)  # Go to Monday
+        
+        day_name = next_day.strftime("%A")
+        for hour in range(start_hour, min(start_hour + 6, end_hour)):
+            slots.append(f"{day_name} {hour}:00")
+            slots.append(f"{day_name} {hour}:30")
+        return slots[:6]
+    
+    # Show today's remaining slots
+    current_hour = now.hour
+    today_name = "Today"
+    
+    for hour in range(max(current_hour + 1, start_hour), end_hour):
+        slots.append(f"{today_name} {hour}:00")
+        slots.append(f"{today_name} {hour}:30")
+    
+    # If we don't have enough slots for today, add tomorrow's slots
+    if len(slots) < 4:
+        next_day = now + timedelta(days=1)
+        if next_day.weekday() != 6:  # Not Sunday
+            day_name = next_day.strftime("%A")
+            remaining_needed = 6 - len(slots)
+            for hour in range(start_hour, min(start_hour + (remaining_needed // 2) + 1, end_hour)):
+                if len(slots) >= 6:
+                    break
+                slots.append(f"{day_name} {hour}:00")
+                if len(slots) >= 6:
+                    break
+                slots.append(f"{day_name} {hour}:30")
+    
+    return slots[:6]  # Always return max 6 slots for clean UI
 
 # Database connection
 def get_db_connection():
@@ -244,39 +300,106 @@ Key behaviors:
 
 FORMATED_SYSTEM_PROMPT = """
 **Response Format Instructions:**
-- Present the information in a clear, easy-to-read paragraph.
-- Use bold text for key terms or headings (e.g., "**Services:**", "**Contact:**") to make the response scannable.
-- Do not use numbered lists or bullet points unless absolutely necessary.
+- Use markdown for a clean, scannable format.
+- Use bolding for key terms (e.g., "**Services:**") and important phrases.
+- For long lists of services or bullet points, use markdown lists (`* ` or `- `).
+- For longer paragraphs, use line breaks to improve readability.
+- Do not use numbered lists.
 """
 
 APPOINTMENT_AI_PROMPT_ADDITION = """
-**AI Decision-Making and Response Rules (Strict Appointment Booking Flow with Proactive Offer):**
+**AI Decision-Making and Response Rules (Strict Appointment Booking Flow):**
 
 1. **Crucial Rule:** If the current conversation is in the middle of collecting booking details (i.e., you have already asked for name, email, phone, or timing), you must **completely ignore** any general company information retrieved from the database. Stay focused on the booking flow only.
-2. If the user's query is explicitly about booking, scheduling, or meeting with a team member, **immediately** start the appointment booking mode.
-3. If the user's query is about a topic where **relevant company information is available**, answer their question directly using only that information. After providing the answer, you may then offer to connect them with a team member: "Would you like me to connect you with our team for more personalised help?"
-4. If the question is unrelated to the company (and relevant company info is NOT available), politely state that you can only help with company-related queries. Then, ask if they would like to connect with the team.
-5. In appointment booking mode:
-    - Politely explain that an expert can assist further and you’ll need a few details to schedule the appointment.
-    - **Always collect details in this exact order**:
-      1. Name
-      2. Email
-      3. Phone number
-      4. Preferred timing
-    - **Important Rule for Preferred Timing:** Our working days are Monday through Saturday, from 9 a.m. to 8 p.m. If the user requests a time on a Sunday, or outside of these hours, you must politely inform them that we are unavailable then and ask them to choose an appointment within our working hours.
-    - **Important Rule for Email Validation:** You should recognize a valid email address as a string that contains an "@" symbol. Once you have a string with an "@" symbol, accept it as the user's email and move on to asking for the next detail.
-    - Only ask for **one missing detail at a time**. If a user skips or ignores a detail, politely insist on getting it before moving on.
-    - Never skip the "Preferred timing" question — ensure it is always asked and answered before completing the booking.
-6. If the user changes the subject or declines to provide details, politely end the booking flow and switch back to normal company chat mode.
-7. Once all four details are collected, confirm the booking with a friendly message and **append** this tag at the very end (do not mention this tag to the user): 
-    `BOOKING_COMPLETE:{"name":"<name>","email":"<email>","phone":"<phone>","timing":"<timing>"}`
-8. Do not repeat previously collected details unless confirming all four at the end.
-9. Stay friendly, professional, and concise throughout the process.
+
+2. If the user asks an unrelated question while in booking mode, you must respond with this specific phrase to confirm their intent: `CONFIRM_SWITCH_MODE: It looks like you've changed the subject. Would you like to cancel the appointment booking and switch to a general chat, or continue with the booking?`
+
+3. If the user responds positively to cancelling, politely end the booking flow and switch to general chat mode. If they want to continue, proceed with the booking.
+
+4. If the user's query is explicitly about booking, scheduling, or meeting with a team member, **immediately** start the appointment booking mode.
+
+5. If the user's query is about a topic where **relevant company information is available**, answer their question directly using only that information. After providing the answer, you may then offer to connect them with a team member: "Would you like me to connect you with our team for more personalised help?"
+
+6. In appointment booking mode:
+    - **Initial Step:** Politely explain that you need a few details. Ask for the **user's name and email address in a single request**, instructing them to provide both in one message.
+    - **Subsequent Steps:** After receiving the name and email, ask for the **phone number**.
+    - **Phone Number Validation:** You must accept a message containing a string of at least 8 digits as a valid phone number.
+    - **Timing Collection:** After the phone number, ask for the preferred timing.
+    - **Working Hours Rule:** Our working days are Monday through Saturday, from 9 AM to 8 PM. Accept any time within these hours.
+    - **Time Format Flexibility:** Accept ANY of these formats: "Friday 2 PM", "Tomorrow 10:00", "Thursday at 3:30", "Monday morning", "Next week Tuesday 11 AM", etc. Be flexible with time formats.
+    - **Time Slot Buttons:** When asking for timing, show clickable buttons using: `TIME_SLOTS_DISPLAY:["slot1","slot2","slot3"]` but ALSO tell users they can type their preferred time manually.
+    - **Email Validation:** Accept any string containing "@" as a valid email.
+    - **CRITICAL BOOKING COMPLETION:** Once you have all details (name, email, phone, timing), respond with a confirmation message followed by EXACTLY this format:
+    
+    BOOKING_COMPLETE:{"name":"[user_name]","email":"[user_email]","phone":"[user_phone]","timing":"[user_timing]"}
+    
+    Replace [user_name], [user_email], [user_phone], and [user_timing] with the actual collected values. DO NOT add any text after this JSON format.
+
+7. Stay friendly, professional, and concise throughout the process.
+8. Never refuse valid appointment times within working hours.
+9. **NEVER ask the same question twice in a row** - if you've already asked for a piece of information, wait for the user's response before proceeding.
 """
+
+# IMPROVED BOOKING PARSING FUNCTION
+def extract_booking_data(bot_response_full):
+    """
+    Enhanced function to extract booking data from AI response with multiple fallback methods
+    """
+    logger.info(f"🔧 Attempting to extract booking data from response length: {len(bot_response_full)}")
+    
+    try:
+        # Method 1: Try the original regex pattern
+        match = re.search(r'BOOKING_COMPLETE:\s*({.*?})', bot_response_full, re.DOTALL)
+        if match:
+            booking_data_str = match.group(1)
+            logger.info(f"✅ Method 1 successful: {booking_data_str}")
+            return json.loads(booking_data_str)
+        
+        # Method 2: Try finding JSON after BOOKING_COMPLETE: (more flexible)
+        booking_complete_index = bot_response_full.find('BOOKING_COMPLETE:')
+        if booking_complete_index != -1:
+            json_part = bot_response_full[booking_complete_index + len('BOOKING_COMPLETE:'):].strip()
+            
+            # Find the first { and matching }
+            json_start = json_part.find('{')
+            if json_start != -1:
+                brace_count = 0
+                json_end = -1
+                
+                for i, char in enumerate(json_part[json_start:], json_start):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_end = i + 1
+                            break
+                
+                if json_end != -1:
+                    potential_json = json_part[json_start:json_end]
+                    logger.info(f"✅ Method 2 found potential JSON: {potential_json}")
+                    return json.loads(potential_json)
+        
+        # Method 3: Look for any JSON-like structure in the entire response
+        json_pattern = r'\{[^}]*"name"[^}]*"email"[^}]*"phone"[^}]*"timing"[^}]*\}'
+        json_match = re.search(json_pattern, bot_response_full, re.DOTALL)
+        if json_match:
+            potential_json = json_match.group(0)
+            logger.info(f"✅ Method 3 found potential JSON: {potential_json}")
+            return json.loads(potential_json)
+        
+        logger.warning("❌ All extraction methods failed")
+        return None
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON parsing error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in booking data extraction: {e}")
+        return None
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    # ---- Fix applied: capture request data BEFORE starting the generator ----
     try:
         data = request.get_json()
         user_message = data.get('message', '').strip() if data else ''
@@ -294,78 +417,141 @@ def chat():
 
     def generate():
         try:
-            relevant_docs = match_documents(user_message)
-            context_string = ""
-            # FIX: Only build context if the booking flow hasn't started.
-            # This prevents the AI from getting confused with conflicting information.
-            booking_in_progress = any("booking" in msg['bot'].lower() for msg in session['history'])
-            if relevant_docs and not booking_in_progress:
-                for doc in relevant_docs:
-                    context_string += f"URL: {doc['url']}\nTitle: {doc['title']}\nContent: {doc['content']}\n\n"
-            else:
-                context_string = "No relevant information found."
+            # Check if we're in booking mode
+            booking_in_progress = any(
+                "name and email" in msg.get('bot', '').lower() or 
+                "phone number" in msg.get('bot', '').lower() or
+                "preferred timing" in msg.get('bot', '').lower() or
+                "BOOKING_COMPLETE" in msg.get('bot', '')
+                for msg in session['history']
+            )
             
-            combined_system_prompt = f"{SYSTEM_PROMPT}\n\n{FORMATED_SYSTEM_PROMPT}\n\n{APPOINTMENT_AI_PROMPT_ADDITION}"
+            relevant_docs = []
+            context_string = "No relevant information found."
+            
+            # Only fetch docs if not in booking mode
+            if not booking_in_progress:
+                relevant_docs = match_documents(user_message)
+                if relevant_docs:
+                    context_string = ""
+                    for doc in relevant_docs:
+                        context_string += f"URL: {doc['url']}\nTitle: {doc['title']}\nContent: {doc['content']}\n\n"
+            
+            time_slots = generate_time_slots()
+            time_slots_str = f"TIME_SLOTS: {json.dumps(time_slots)}"
+            
+            combined_system_prompt = f"{SYSTEM_PROMPT}\n\n{FORMATED_SYSTEM_PROMPT}\n\n{APPOINTMENT_AI_PROMPT_ADDITION}\n\n{time_slots_str}"
             
             history_string = "\n".join([f"User: {h['user']}\nBot: {h['bot']}" for h in session['history']])
             full_prompt = f"{combined_system_prompt}\n\nCompany Information:\n{context_string}\n\nConversation History:\n{history_string}\n\nUser's message: {user_message}\n\nResponse:"
 
-            # Use stream=True to get a generator
-            response_stream = model.generate_content(full_prompt, stream=True)
+            # Generate AI response with retry logic
+            max_retries = 3
             bot_response_full = ""
 
-            # Stream chunks of the response
-            for chunk in response_stream:
-                if chunk.text:
-                    bot_response_full += chunk.text
-                    
-                    # Check if the chunk contains the booking tag and split it.
-                    # This prevents the tag from being streamed to the frontend.
-                    if "BOOKING_COMPLETE:" in chunk.text:
-                        # Use a regex to find the JSON object. This is more resilient to extra text.
-                        match = re.search(r'\{(.*?)\}', chunk.text)
-                        if match:
-                            booking_data_str = match.group(0)
-                        else:
-                            booking_data_str = "" # Fallback if no JSON is found
-                        
-                        partial_response = chunk.text.split("BOOKING_COMPLETE:")[0].strip()
-                        if partial_response:
-                            yield json.dumps({'response_chunk': partial_response}) + '\n'
-                        break
-                    
-                    yield json.dumps({'response_chunk': chunk.text}) + '\n'
+            for attempt in range(max_retries):
+                try:
+                    response_stream = model.generate_content(full_prompt, stream=True)
+                    bot_response_full = ""
 
-            # After streaming is complete, process the full response for special tags
+                    for chunk in response_stream:
+                        if hasattr(chunk, 'text') and chunk.text:
+                            bot_response_full += chunk.text
+                            # Only stream if it's not a booking completion
+                            if "BOOKING_COMPLETE:" not in bot_response_full:
+                                yield json.dumps({'response_chunk': chunk.text}) + '\n'
+                            
+                    if bot_response_full.strip():
+                        break
+                        
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt + 1} failed: {e}")
+                    if attempt == max_retries - 1:
+                        fallback_response = "I apologize, but I'm having trouble processing your request right now. Could you please rephrase your message or try again?"
+                        yield json.dumps({'response_chunk': fallback_response}) + '\n'
+                        session['history'].append({'user': user_message, 'bot': fallback_response})
+                        return
+                    time.sleep(1)
+
+            # Handle booking completion
             if "BOOKING_COMPLETE:" in bot_response_full:
                 try:
-                    # Use a regex to find the JSON object from the full response, just in case the split didn't catch it all
-                    match = re.search(r'BOOKING_COMPLETE:({.*?})', bot_response_full, re.DOTALL)
-                    if match:
-                        booking_data_str = match.group(1)
-                    else:
-                        raise ValueError("Booking data not found after tag.")
-
-                    booking_data = json.loads(booking_data_str)
-                    success, message = store_appointment_and_send_emails(**booking_data)
-                    bot_response_user = bot_response_full.split("BOOKING_COMPLETE:")[0].strip()
-                    final_message = f"\n\n✅ **{message}**" if success else f"\n\n⚠️ **{message}**"
+                    booking_data = extract_booking_data(bot_response_full)
                     
-                    # Yield the final confirmation message
-                    yield json.dumps({'response_chunk': final_message, 'is_final': True, 'session_id': session_id}) + '\n'
+                    if booking_data and all(key in booking_data for key in ['name', 'email', 'phone', 'timing']):
+                        logger.info(f"✅ Successfully parsed booking data: {booking_data}")
+                        
+                        success, message = store_appointment_and_send_emails(
+                            booking_data['name'],
+                            booking_data['email'],
+                            booking_data['phone'],
+                            booking_data['timing']
+                        )
+                        
+                        # Extract the AI message part (before BOOKING_COMPLETE)
+                        bot_response_user_part = bot_response_full.split("BOOKING_COMPLETE:")[0].strip()
+                        
+                        if success:
+                            confirmation_msg = f"""🎉 **Perfect! Your appointment request has been submitted successfully!**
 
-                    # Clear session after successful booking
-                    if success:
-                        if session_id in appointment_sessions:
+**What happens next:**
+✅ Confirmation email sent to {booking_data['email']}
+📞 Our team will contact you within 24 hours to confirm your {booking_data['timing']} appointment
+💼 We'll discuss your specific requirements during the call
+
+Thank you for choosing Fuzionest, {booking_data['name']}! We're excited to help you achieve your goals. 🚀"""
+                        else:
+                            confirmation_msg = f"""⚠️ **Appointment details received!**
+                  
+Thank you {booking_data['name']}! We've recorded your appointment request for {booking_data['timing']}.
+
+{message}
+
+You can also reach us directly at:
+📧 Email: info@fuzionest.com  
+📞 Phone: +1 (555) 123-4567"""
+                        
+                        # Send the confirmation message as a separate chunk
+                        yield json.dumps({'response_chunk': confirmation_msg, 'is_final': True, 'session_id': session_id}) + '\n'
+
+                        # Clean up session on successful booking
+                        if success and session_id in appointment_sessions:
                             del appointment_sessions[session_id]
+                            
+                        # Store in history without the BOOKING_COMPLETE tag
+                        session['history'].append({'user': user_message, 'bot': bot_response_user_part})
+                        return
+                    else:
+                        logger.error("❌ Missing required booking data fields")
+                        raise ValueError("Incomplete booking data")
+                        
+                except Exception as e:        
+                    logger.error(f"❌ Failed to process booking: {e}")
+                    logger.error(f"❌ Full AI response: {bot_response_full}")
+                    
+                    bot_response_user_part = bot_response_full.split("BOOKING_COMPLETE:")[0].strip()
+                    error_message = """⚠️ **Almost there!** 
 
-                except (json.JSONDecodeError, KeyError, ValueError) as e:
-                    logger.error(f"Failed to parse booking data from AI response: {e}")
-                    error_message = "I've collected your details, but there was a small issue. Please contact us directly to confirm."
-                    yield json.dumps({'response_chunk': f"\n\n⚠️ **{error_message}**"}) + '\n'
+I've collected your details, but there was a small technical issue processing the booking. 
+    
+**Don't worry - here's what you can do:**
+📞 Call us directly: +1 (555) 123-4567
+📧 Email us: info@fuzionest.com
+💬 Or try booking again using the chat
+
+Our team will be happy to help you schedule your appointment manually!"""
+        
+                    final_error_message = f"{bot_response_user_part}\n\n{error_message}"
+                    yield json.dumps({'response_chunk': final_error_message, 'is_final': True}) + '\n'
+                    
+                    session['history'].append({'user': user_message, 'bot': bot_response_user_part})
+                    return
+            else:
+                # Normal response handling - make sure we send is_final
+                yield json.dumps({'response_chunk': '', 'is_final': True, 'session_id': session_id}) + '\n'
             
-            # This logic updates the session history with the full response, cleaned of the tag
-            session['history'].append({'user': user_message, 'bot': bot_response_full.split("BOOKING_COMPLETE:")[0].strip()})
+            # Store in history
+            session['history'].append({'user': user_message, 'bot': bot_response_full})
         
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
@@ -373,7 +559,6 @@ def chat():
 
     return Response(generate(), mimetype='application/json')
 
-# Your existing routes for testing and scraping
 @app.route('/api/common-questions')
 def get_common_questions():
     return jsonify({'questions': COMMON_QUESTIONS})
