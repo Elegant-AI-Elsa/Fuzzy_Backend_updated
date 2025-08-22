@@ -14,6 +14,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import time
+from zoneinfo import ZoneInfo
+
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +37,7 @@ appointment_sessions = {}
 
 # Helper to generate time slots for the current day
 def generate_time_slots():
+    ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now()
     slots = []
     
@@ -128,6 +131,7 @@ def match_documents(query: str, match_threshold: float = 0.3, match_count: int =
         )
         
         matches = cur.fetchall()
+        
         logger.info(f"📊 Database returned {len(matches)} matches")
         
         cur.close()
@@ -358,16 +362,19 @@ COMMON_QUESTIONS = [
     "How can Fuzionest help my business?"
 ]
 
+
+
 SYSTEM_PROMPT = """
-You are Fuzzy, the friendly AI assistant for Fuzionest company. You are here to help visitors learn about Fuzionest's services and provide assistance.
+You are Fuzzy, the friendly, warm, and helpful AI assistant for Fuzionest company. You are here to help visitors learn about Fuzionest's services and provide assistance.
 
 Key behaviors:
-- Always be polite, friendly, and professional
-- Answer questions strictly based on the company information provided
-- Keep responses concise but informative
-- Never mention sources or where you got the information
-- Be helpful and encouraging about Fuzionest's services
+- Always be polite, friendly, and professional with a positive and encouraging tone.
+- Answer questions strictly based on the company information provided.
+- Keep responses concise but informative.
+- Never mention sources or where you got the information.
+- Be helpful and encouraging about Fuzionest's services.
 - **Important:** Do not start your responses with a greeting unless the user's message is a greeting (e.g., "Hi," "Hello," "Hey").
+- **Synthesize and Summarize:** For broad questions like "Tell me about your company," you MUST synthesize a helpful, multi-sentence summary from the provided `Company Information` context. Start with a general overview and then mention key services or unique aspects found in the text. Do not give a generic, unhelpful answer.
 - Your primary goal is to answer the user's question directly and clearly.
 """
 
@@ -383,7 +390,9 @@ FORMATED_SYSTEM_PROMPT = """
 APPOINTMENT_AI_PROMPT_ADDITION = """
 **AI Decision-Making and Response Rules (Enhanced Appointment Booking & Update Flow):**
 
-0. **Information Not Found Rule:** If the `Company Information` section says 'No relevant information found,' you must inform the user you couldn't find the specific detail and then immediately offer to connect them with the team for more help. For example: 'I couldn't find the specific details about that. Would you like me to connect you with our team for more personalised help?'
+0.  **Recall Existing Appointment:** If `STORED_USER_DETAILS` and `LAST_APPOINTMENT_TIMING` are present and the user asks about their appointment (e.g., 'what is my time', 'when is our meeting'), you MUST respond with the value from `LAST_APPOINTMENT_TIMING`. **Do not start a new booking.** For example: 'Your appointment is scheduled for [timing]. Let me know if you'd like to change it!'
+    **Information Not Found Rule:** If the `Company Information` section says 'No relevant information found,' you must inform the user you couldn't find the specific detail and then immediately offer to connect them with the team for more help. For example: 'I couldn't find the specific details about that. Would you like me to connect you with our team for more personalised help?'
+    **Out-of-Scope Rule:** If the user's query is completely unrelated to Fuzionest's business, services, or appointments, and no relevant information is found, respond with this exact phrase: 'I am Fuzzy, the AI assistant for Fuzionest. I can only provide information about our company and services. Is there anything related to Fuzionest I can help you with?'
 
 1. **Crucial Rule:** If the current conversation is in the middle of collecting booking details (i.e., you have already asked for name, email, phone, or timing), you must **completely ignore** any general company information retrieved from the database. Stay focused on the booking flow only.
 
@@ -402,10 +411,12 @@ APPOINTMENT_AI_PROMPT_ADDITION = """
 
 6. **CRITICAL BOOKING TRIGGER:** If the user's query is explicitly about booking, scheduling, or meeting... **OR if the user gives a positive confirmation (like 'yes', 'yeah', or 'sure') immediately after you have asked if they want to connect with the team**, you must **immediately** start the appointment booking mode by asking for their name and email address.
 
-7. If the user's query is about a topic where **relevant company information is available**, answer their question directly using only that information. After providing the answer, you may then offer to connect them with a team member: "Would you like me to connect you with our team for more personalised help?"
+7. **BOOKING PREVENTION FOR POST-BOOKING/UPDATE MESSAGES:** If a user has already completed a booking or appointment update (indicated by their details being stored in STORED_USER_DETAILS), and they send casual messages like "thank you", "thanks", "great", "ok", "perfect", "awesome", "no need", or similar acknowledgments immediately after a booking/update confirmation, do NOT trigger any booking or update flows. Instead, respond naturally to their message and offer general assistance.
 
-8. In appointment booking mode:
-    - **Initial Step:** Politely explain that you need a few details. Ask for the **user's name and email address in a single request**, instructing them to provide both in one message.
+8. If the user's query is about a topic where **relevant company information is available**, answer their question directly using only that information. After providing the answer, you may then offer to connect them with a team member: "Would you like me to connect you with our team for more personalised help?"
+
+9. In appointment booking mode:
+    - **Initial Step:** Politely explain that you need a few details. Ask for the **user's name and email address in a single request**.Be friendly and conversational
     - **Subsequent Steps:** After receiving the name and email, ask for the **phone number**.
     - **Phone Number Validation:** You must accept a message containing a string of at least 8 digits as a valid phone number.
     - **Timing Collection:** After the phone number, ask for the preferred timing.
@@ -419,9 +430,9 @@ APPOINTMENT_AI_PROMPT_ADDITION = """
     
     Replace [user_name], [user_email], [user_phone], and [user_timing] with the actual collected values. DO NOT add any text after this JSON format.
 
-9. Stay friendly, professional, and concise throughout the process.
-10. Never refuse valid appointment times within working hours.
-11. **NEVER ask the same question twice in a row** - if you've already asked for a piece of information, wait for the user's response before proceeding.
+10. Stay friendly, professional, and concise throughout the process.
+11. Never refuse valid appointment times within working hours.
+12. **NEVER ask the same question twice in a row** - if you've already asked for a piece of information, wait for the user's response before proceeding.
 """
 
 # IMPROVED BOOKING PARSING FUNCTION
@@ -555,7 +566,28 @@ def chat():
             context_string = "No relevant information found."
             
             should_search = True
-            if session['history']:
+            
+            # NEW: Check if user has already completed a booking/update and is sending casual messages
+            if session.get('user_details'):
+                casual_messages = [
+                    'thank you', 'thanks', 'great', 'ok', 'okay', 'perfect', 'awesome', 
+                    'cool', 'nice', 'good', 'excellent', 'wonderful', 'amazing', 
+                    'appreciate', 'got it', 'understood', 'alright', 'all right',
+                    'no need', 'no problem', 'sounds good', 'no need thanks', 'no need thank you'
+                ]
+                user_msg_lower = user_message.lower().strip()
+                
+                # Check if the last bot message was a booking or update confirmation
+                last_bot_message = session['history'][-1].get('bot', '').lower() if session['history'] else ''
+                was_recent_booking = 'appointment request has been submitted successfully' in last_bot_message
+                was_recent_update = 'appointment timing has been updated successfully' in last_bot_message
+                
+                # If it's a casual post-booking/update message, don't search and don't trigger any flows
+                if (was_recent_booking or was_recent_update) and any(casual_msg in user_msg_lower for casual_msg in casual_messages):
+                    should_search = False
+                    logger.info("✅ User sent casual post-booking/update message, skipping document search and all booking triggers.")
+            
+            if session['history'] and should_search:
                 last_bot_message = session['history'][-1].get('bot', '').lower()
                 if "connect you with our team" in last_bot_message:
                     if user_message.lower().strip() in ['yes', 'yep', 'yeah', 'ok', 'okay', 'sure', 'go ahead', 'please do', 'yeah, go ahead']:
