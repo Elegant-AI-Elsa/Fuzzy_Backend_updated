@@ -21,8 +21,10 @@ from zoneinfo import ZoneInfo
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
 
+# Replace "https://your-frontend-domain.com" with your actual frontend URL
+# Adding localhost allows you to continue testing on your own computer
+CORS(app, resources={r"/api/*": {"origins": ["https://fuzzy-frontend-updated.vercel.app", "http://localhost:3000"]}})
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
