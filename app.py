@@ -217,7 +217,7 @@ def send_appointment_emails(name, email, phone, timing, is_update=False, old_tim
         customer_msg['To'] = email
         
         if is_update:
-            customer_msg['Subject'] = "⏰ Appointment Time Updated - Fuzionest"
+            customer_msg['Subject'] = "⏰ Your Appointment Time has been Updated!-Fuzionest"
             customer_body = f"""
 Hello {name}!
 
@@ -232,7 +232,7 @@ Your appointment with Fuzionest has been successfully updated! 🔄
 📅 Updated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
 
 **What happens next?**
-Our expert team will contact you within 24 hours to confirm the new scheduling and discuss any changes to your requirements.
+Our team has updated your consultation time. A Fuzionest expert will reach out to you at the new requested time of **{timing}** to discuss your requirements.
 
 **About Fuzionest:**
 We specialize in providing innovative solutions tailored to your business needs. Our team of experts is ready to discuss how we can help you succeed.
@@ -246,7 +246,7 @@ The Fuzionest Team 🌟
 This is an automated confirmation. Please don't reply to this email.
             """
         else:
-            customer_msg['Subject'] = "🎉 Appointment Confirmed with Fuzionest!"
+            customer_msg['Subject'] = "🎉 Your Appointment is Scheduled with Fuzionest!"
             customer_body = f"""
 Hello {name}!
 
@@ -260,12 +260,12 @@ Thank you for booking an appointment with Fuzionest! 🚀
 📅 Requested on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
 
 **What happens next?**
-Our expert team will contact you within 24 hours to confirm the exact scheduling and discuss your specific requirements. We're excited to help you achieve your goals!
+Our team is preparing for your consultation. A Fuzionest expert will reach out to you at your requested time of **{timing}** to discuss your requirements in detail. We're excited to help you achieve your goals!
+
+If you have any questions, feel free to reach out to us anytime.
 
 **About Fuzionest:**
 We specialize in providing innovative solutions tailored to your business needs. Our team of experts is ready to discuss how we can help you succeed.
-
-If you have any questions, feel free to reach out to us anytime.
 
 Best regards,
 The Fuzionest Team 🌟
@@ -367,10 +367,11 @@ COMMON_QUESTIONS = [
 
 
 SYSTEM_PROMPT = """
-You are Fuzzy, the friendly, warm, and helpful AI assistant for Fuzionest company. You are here to help visitors learn about Fuzionest's services and provide assistance.
+You are Fuzzy, the friendly, warm, and helpful AI assistant for Fuzionest company. Your primary goal is to help visitors learn about Fuzionest's services and provide assistance.
 
 Key behaviors:
 - Always be polite, friendly, and professional with a positive and encouraging tone.
+- **Crucially, always speak in the first person from the company's perspective. Use "we," "our," and "us" instead of "Fuzionest" or "they." You are part of the Fuzionest team.**
 - Answer questions strictly based on the company information provided.
 - Keep responses concise but informative.
 - Never mention sources or where you got the information.
@@ -384,6 +385,8 @@ Key behaviors:
 FORMATED_SYSTEM_PROMPT = """
 **Response Format Instructions:**
 - Use markdown for a clean, scannable format.
+- **Be generous with bolding (`**term**`) to highlight key services, concepts, and important phrases.**
+- **Always break down longer answers into shorter paragraphs or bullet points (`* `) to improve readability. Avoid large blocks of text.**
 - Use bolding for key terms (e.g., "**Services:**") and important phrases.
 - For long lists of services or bullet points, use markdown lists (`* ` or `- `).
 - For longer paragraphs, use line breaks to improve readability.
@@ -393,9 +396,12 @@ FORMATED_SYSTEM_PROMPT = """
 APPOINTMENT_AI_PROMPT_ADDITION = """
 **AI Decision-Making and Response Rules (Enhanced Appointment Booking & Update Flow):**
 
-0.  **Recall Existing Appointment:** If `STORED_USER_DETAILS` and `LAST_APPOINTMENT_TIMING` are present and the user asks about their appointment (e.g., 'what is my time', 'when is our meeting'), you MUST respond with the value from `LAST_APPOINTMENT_TIMING`. **Do not start a new booking.** For example: 'Your appointment is scheduled for [timing]. Let me know if you'd like to change it!'
-    **Information Not Found Rule:** If the `Company Information` section says 'No relevant information found,' you must inform the user you couldn't find the specific detail and then immediately offer to connect them with the team for more help. For example: 'I couldn't find the specific details about that. Would you like me to connect you with our team for more personalised help?'
-    **Out-of-Scope Rule:** If the user's query is completely unrelated to Fuzionest's business, services, or appointments, and no relevant information is found, respond with this exact phrase: 'I am Fuzzy, the AI assistant for Fuzionest. I can only provide information about our company and services. Is there anything related to Fuzionest I can help you with?'
+0.  **- Recall Stored Details:** If `STORED_USER_DETAILS` are present, use them to answer any questions the user has about their stored information.
+    - If the user asks for their name (e.g., "what is my name?"), respond with: "Yes, I have your name down as **[user_name]**."
+    - If the user asks for their appointment time (e.g., "when is my meeting?"), respond with: "Your appointment is scheduled for **[last_appointment_timing]**."
+    - For any other related questions, use the stored details to form a helpful answer. Do not start a new booking.
+
+- **Information Not Found Rule:** If the `Company Information` section is empty for a query, inform the user you couldn't find the detail and then offer to connect them with the team.
 
 1. **Crucial Rule:** If the current conversation is in the middle of collecting booking details (i.e., you have already asked for name, email, phone, or timing), you must **completely ignore** any general company information retrieved from the database. Stay focused on the booking flow only.
 
@@ -403,8 +409,9 @@ APPOINTMENT_AI_PROMPT_ADDITION = """
 
 3. If the user responds positively to cancelling, politely end the booking flow and switch to general chat mode. If they want to continue, proceed with the booking.
 
-4. **NEW: Appointment Update Detection** - If the user mentions wanting to "change," "update," "reschedule," or "modify" their appointment time, and you have their previous details stored, immediately enter UPDATE_MODE.
-
+4. **SMART APPOINTMENT UPDATE DETECTION:** Enter UPDATE_MODE if EITHER of these conditions are met:
+   - The user's message contains keywords like "change," "update," "reschedule," "yes","yeah go ahead","proceed" or "modify".Ask them need to chnage the timing and preferred timing of the user to type their time manually dont display time slots for updation timing
+   - if the user asks like connect with your team or similar to this then switch to appointment booking mode
 5. **UPDATE_MODE Rules:**
     - **First, check if the user's message ALREADY contains a new preferred time** (e.g., "I want to change my appointment to Thursday 7 p.m").
     - **If a new time IS provided:** Immediately use that time and respond with the `UPDATE_COMPLETE` JSON format. Do NOT ask for the time again.
@@ -418,21 +425,33 @@ APPOINTMENT_AI_PROMPT_ADDITION = """
 
 8. If the user's query is about a topic where **relevant company information is available**, answer their question directly using only that information. After providing the answer, you may then offer to connect them with a team member: "Would you like me to connect you with our team for more personalised help?"
 
-9. In appointment booking mode:
-    - **Initial Step:** Politely explain that you need a few details. Ask for the **user's name and email address in a single request**.Be friendly and conversational
-    - **Subsequent Steps:** After receiving the name and email, ask for the **phone number**.
-    - **Phone Number Validation:** You must accept a message containing a string of at least 8 digits as a valid phone number.
-    - **Timing Collection:** After the phone number, ask for the preferred timing.
-    - **Working Hours Rule:** Our working days are Monday through Saturday, from 9 AM to 8 PM. Accept any time within these hours.
-    - **Time Format Flexibility:** Accept ANY of these formats: "Friday 2 PM", "Tomorrow 10:00", "Thursday at 3:30", "Monday morning", "Next week Tuesday 11 AM", etc. Be flexible with time formats.
-    - **Time Slot Buttons:** When asking for timing, show clickable buttons using: `TIME_SLOTS_DISPLAY:["slot1","slot2","slot3"]` but ALSO tell users they can type their preferred time manually.
-    - **Email Validation:** Accept any string containing "@" as a valid email.
-    - **CRITICAL BOOKING COMPLETION:** Once you have all details (name, email, phone, timing), respond with a confirmation message followed by EXACTLY this format:
-    
-    BOOKING_COMPLETE:{"name":"[user_name]","email":"[user_email]","phone":"[user_phone]","timing":"[user_timing]"}
-    
-    Replace [user_name], [user_email], [user_phone], and [user_timing] with the actual collected values. DO NOT add any text after this JSON format.
+9. APPOINTMENT_AI_PROMPT_ADDITION = 
+**AI Decision-Making: Intelligent Appointment Booking Form**
 
+Your primary goal in booking mode is to fill a form with the following details: `name`, `email`, `phone`, `timing`. The current state of this form is provided in `BOOKING_FORM_STATE`.
+
+**Core Rules:**
+-  **State-Aware Interaction:** Before asking anything, ALWAYS check the `BOOKING_FORM_STATE`. Your goal is to fill the fields that are `null`.
+-   **Flexible Entity Extraction:** The user may provide information out of order. They might also provide multiple details in a single message (e.g., 'My name is John and my email is john@test.com'). You MUST be able to parse their message for:
+    - a name, an email, or a phone number. 
+    - User may send name and email together you have analyze and store them (e.g 'anu' 'anu@gamil.com') in 'BOOKING_FORM_STATE'
+    -   An **email** is a single word containing an '@' symbol, with no spaces (e.g., `user@example.com`).
+    -   A **phone number** is a number with 8 to 12 digits (e.g., `9876543210`).
+    -   A **name** is any other word or group of words in the message that is not an email or a phone number (e.g., `Maha`, `Anu S`).
+    -   For example, in the message '`Maha 9876543210 test@email.com`', you must extract all three pieces of information at once.
+    - if the user provides Mobile no first then you have to ask them the missing details like name and email the details may get in flexible way but all 3 must be collected and then onlt timing must be asked
+-  **Acknowledge and Proceed:** When you successfully extract information, acknowledge it (e.g., "Great, I've got your number.") and then immediately ask for the next *missing* piece of information. **Do not ask for information you already have.**
+-  **Update the State:** After you extract information, you MUST include a special tag in your response to update the backend. Format: `FORM_UPDATE:{"field_name":"extracted_value"}`. You can update multiple fields at once, e.g., `FORM_UPDATE:{"name":"John Doe","email":"john@email.com"}`.
+-  **Booking Flow Sequence:**
+    - First, collect `name`, `email`, and `phone` in any order.
+    - Ask for name and email together first.
+    - ONLY after you have all three (`name`, `email`, `phone`), then ask for the `timing`.
+    - When asking for timing, display the `TIME_SLOTS_DISPLAY` buttons.
+    -**Working Hours Rule:** Our working days are Monday through Saturday, from 9 AM to 8 PM. Accept any time within these hours.   
+    - **Time Format Flexibility:** Accept ANY of these formats: "Friday 2 PM", "Tomorrow 10:00", "Thursday at 3:30", "Monday morning", "Next week Tuesday 11 AM", etc. Be flexible with time formats.
+-  **Time Slot Buttons:** When you ask for the timing, your response text MUST include the exact tag `TIME_SLOTS_DISPLAY:[...]` filled with the available slots. For example: 'What time works for you? You can also type a time. TIME_SLOTS_DISPLAY:["Today 14:00","Today 14:30"]'
+-  **Completion:** Once all four fields are filled, you MUST end your response with the `BOOKING_COMPLETE` JSON object using the values from the form state.
+ 
 10. Stay friendly, professional, and concise throughout the process.
 11. Never refuse valid appointment times within working hours.
 12. **NEVER ask the same question twice in a row** - if you've already asked for a piece of information, wait for the user's response before proceeding.
@@ -540,13 +559,35 @@ def chat():
     if not user_message:
         return jsonify({'error': 'Message is required'}), 400
 
+    # --- MODIFIED: Added 'booking_details' to the session for form filling ---
     if session_id not in appointment_sessions:
         appointment_sessions[session_id] = {
             'history': [],
-            'user_details': None,  # Store user details after successful booking
-            'last_appointment_timing': None
+            'user_details': None,
+            'last_appointment_timing': None,
+            'booking_details': {'name': None, 'email': None, 'phone': None, 'timing': None}
         }
     session = appointment_sessions[session_id]
+
+    # --- ADDED: Helper function to update form state from the AI's response ---
+    def update_booking_details(response_text):
+        match = re.search(r'FORM_UPDATE:({.*?})', response_text)
+        if match:
+            try:
+                update_data = json.loads(match.group(1))
+                # Ensure booking_details exists before updating
+                if 'booking_details' not in session:
+                    session['booking_details'] = {'name': None, 'email': None, 'phone': None, 'timing': None}
+                
+                for key, value in update_data.items():
+                    if key in session['booking_details']:
+                        session['booking_details'][key] = value
+                        logger.info(f"Updated booking detail for session {session_id}: {key} = {value}")
+                # Return the text with the tag removed for the user to see
+                return response_text.replace(match.group(0), "").strip()
+            except json.JSONDecodeError:
+                logger.error("Failed to parse FORM_UPDATE JSON from AI response.")
+        return response_text
 
     def generate():
         try:
@@ -563,14 +604,11 @@ def chat():
                        "update_complete" not in last_bot_message and \
                        "almost there" not in last_bot_message:
                         booking_in_progress = True
-            # --- END: MODIFIED BOOKING FLAG LOGIC ---
-            
+            # --- END: MODIFIED BOOKING FLAG LOGIC ---        
             relevant_docs = []
             context_string = "No relevant information found."
             
             should_search = True
-            
-            # NEW: Check if user has already completed a booking/update and is sending casual messages
             if session.get('user_details'):
                 casual_messages = [
                     'thank you', 'thanks', 'great', 'ok', 'okay', 'perfect', 'awesome', 
@@ -579,23 +617,19 @@ def chat():
                     'no need', 'no problem', 'sounds good', 'no need thanks', 'no need thank you'
                 ]
                 user_msg_lower = user_message.lower().strip()
-                
-                # Check if the last bot message was a booking or update confirmation
                 last_bot_message = session['history'][-1].get('bot', '').lower() if session['history'] else ''
                 was_recent_booking = 'appointment request has been submitted successfully' in last_bot_message
                 was_recent_update = 'appointment timing has been updated successfully' in last_bot_message
-                
-                # If it's a casual post-booking/update message, don't search and don't trigger any flows
                 if (was_recent_booking or was_recent_update) and any(casual_msg in user_msg_lower for casual_msg in casual_messages):
                     should_search = False
-                    logger.info("✅ User sent casual post-booking/update message, skipping document search and all booking triggers.")
+                    logger.info("✅ User sent casual post-booking/update message, skipping document search.")
             
             if session['history'] and should_search:
                 last_bot_message = session['history'][-1].get('bot', '').lower()
                 if "connect you with our team" in last_bot_message:
                     if user_message.lower().strip() in ['yes', 'yep', 'yeah', 'ok', 'okay', 'sure', 'go ahead', 'please do', 'yeah, go ahead']:
                         should_search = False
-                        logger.info("✅ User is starting a booking, skipping document search.")
+                        logger.info("✅ User agreed to book, skipping document search.")
 
             if not booking_in_progress and should_search:
                 relevant_docs = match_documents(user_message)
@@ -605,45 +639,47 @@ def chat():
                         context_string += f"URL: {doc['url']}\nTitle: {doc['title']}\nContent: {doc['content']}\n\n"
             
             time_slots = generate_time_slots()
-            time_slots_str = f"TIME_SLOTS: {json.dumps(time_slots)}"
+            time_slots_str = f"TIME_SLOTS_DISPLAY: {json.dumps(time_slots)}"
             
             user_details_str = ""
-            if session['user_details']:
+            if session.get('user_details'):
                 user_details_str = f"\n\nSTORED_USER_DETAILS: {json.dumps(session['user_details'])}"
-                if session['last_appointment_timing']:
+                if session.get('last_appointment_timing'):
                     user_details_str += f"\nLAST_APPOINTMENT_TIMING: {session['last_appointment_timing']}"
-            
-            combined_system_prompt = f"{SYSTEM_PROMPT}\n\n{FORMATED_SYSTEM_PROMPT}\n\n{APPOINTMENT_AI_PROMPT_ADDITION}\n\n{time_slots_str}{user_details_str}"
-            
+
+            booking_form_state_str = f"BOOKING_FORM_STATE: {json.dumps(session.get('booking_details', {}))}"
             history_string = "\n".join([f"User: {h['user']}\nBot: {h['bot']}" for h in session['history']])
-            full_prompt = f"{combined_system_prompt}\n\nCompany Information:\n{context_string}\n\nConversation History:\n{history_string}\n\nUser's message: {user_message}\n\nResponse:"
+            # --- ADD THIS LINE ---
+            current_time_str = f"The current date and time is {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%A, %B %d, %Y at %I:%M %p IST')}."
+
+            # --- UPDATE THIS VARIABLE ---
+            full_prompt = (
+                f"{SYSTEM_PROMPT}\n\n{FORMATED_SYSTEM_PROMPT}\n\n{APPOINTMENT_AI_PROMPT_ADDITION}\n\n"
+                f"Current Time: {current_time_str}\n\n" # <-- Add this new line here
+                f"{booking_form_state_str}\n\n{time_slots_str}{user_details_str}\n\nCompany Information:\n{context_string}\n\n"
+                f"Conversation History:\n{history_string}\n\nUser's message: {user_message}\n\nResponse:"
+            )
 
             max_retries = 3
             bot_response_full = ""
-
             for attempt in range(max_retries):
                 try:
                     response_stream = model.generate_content(full_prompt, stream=True)
-                    bot_response_full = ""
-
-                    for chunk in response_stream:
-                        if hasattr(chunk, 'text') and chunk.text:
-                            bot_response_full += chunk.text
-                    
-                    if "BOOKING_COMPLETE:" not in bot_response_full and "UPDATE_COMPLETE:" not in bot_response_full:
-                        yield json.dumps({'response_chunk': bot_response_full}) + '\n'
-
+                    bot_response_full = "".join([chunk.text for chunk in response_stream if hasattr(chunk, 'text') and chunk.text])
                     if bot_response_full.strip():
                         break
-                        
                 except Exception as e:
                     logger.warning(f"Attempt {attempt + 1} failed: {e}")
                     if attempt == max_retries - 1:
                         fallback_response = "I apologize, but I'm having trouble processing your request right now. Could you please rephrase your message or try again?"
-                        yield json.dumps({'response_chunk': fallback_response}) + '\n'
-                        session['history'].append({'user': user_message, 'bot': fallback_response})
+                        yield json.dumps({'response_chunk': fallback_response, 'is_final': True}) + '\n'
+                        if fallback_response.strip():
+                           session['history'].append({'user': user_message, 'bot': fallback_response})
                         return
                     time.sleep(1)
+
+            user_facing_response = update_booking_details(bot_response_full)
+
 
             if "BOOKING_COMPLETE:" in bot_response_full or "UPDATE_COMPLETE:" in bot_response_full:
                 try:
@@ -673,12 +709,12 @@ def chat():
 
 **What happens next:**
 ✅ Update confirmation email sent to {booking_data['email']}
-📞 Our team will contact you within 24 hours to confirm your new {booking_data['new_timing']} appointment
+📞 Our team will contact you at your new requested time of **{booking_data['new_timing']}**
 💼 We'll be ready to discuss your requirements at the new scheduled time
 
 Thank you for updating your appointment, {booking_data['name']}! 🚀
 
-*Need to change the timing again? Just let me know!*"""
+"""
                             else:
                                 confirmation_msg = f"""⚠️ **Appointment timing updated!**
                         
@@ -713,12 +749,10 @@ Thank you {booking_data['name']}! We've updated your appointment to {booking_dat
 
 **What happens next:**
 ✅ Confirmation email sent to {booking_data['email']}
-📞 Our team will contact you within 24 hours to confirm your {booking_data['timing']} appointment
+📞 Our team will contact you at your requested time of **{booking_data['timing']}**
 💼 We'll discuss your specific requirements during the call
-
 Thank you for choosing Fuzionest, {booking_data['name']}! We're excited to help you achieve your goals. 🚀
-
-*Need to change the timing later? Just let me know and I can help you update it!*"""
+"""
                             else:
                                 confirmation_msg = f"""⚠️ **Appointment details received!**
                         
@@ -744,7 +778,7 @@ Thank you {booking_data['name']}! We've recorded your appointment request for {b
                     session['history'].append({'user': user_message, 'bot': bot_response_user_part})
                     return
             else:
-                yield json.dumps({'response_chunk': '', 'is_final': True, 'session_id': session_id}) + '\n'
+                yield json.dumps({'response_chunk': user_facing_response, 'is_final': True, 'session_id': session_id}) + '\n'
             
             session['history'].append({'user': user_message, 'bot': bot_response_full})
         
